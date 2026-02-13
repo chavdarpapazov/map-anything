@@ -4,13 +4,14 @@
 # found in the LICENSE file in the root directory of this source tree.
 
 """
-MapAnything Demo: Images-Only Inference with Visualization
+MapAnything Demo: Inference from calibrated RGBD images.
 
 Usage:
-    python demo_images_only_inference.py --help
+    python demo_calibrated_rgbd_inference.py --help
 """
 
 import argparse
+import cv2
 import os
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -20,8 +21,12 @@ import rerun as rr
 import torch
 
 from mapanything.models import MapAnything
+from mapanything.utils.filesystem import (
+    collect_corresponding_file_paths,
+    FileCollectorInput,
+)
 from mapanything.utils.geometry import depthmap_to_world_frame
-from mapanything.utils.image import load_images
+from mapanything.utils.image import preprocess_inputs
 from mapanything.utils.viz import (
     predictions_to_glb,
     script_add_rerun_args,
@@ -93,12 +98,12 @@ def get_parser():
     parser = argparse.ArgumentParser(
         description="MapAnything Demo: Visualize metric 3D reconstruction from images"
     )
-    parser.add_argument(
-        "--image_folder",
-        type=str,
-        required=True,
-        help="Path to folder containing images for reconstruction",
-    )
+    # parser.add_argument(
+    #     "--image_folder",
+    #     type=str,
+    #     required=True,
+    #     help="Path to folder containing images for reconstruction",
+    # )
     parser.add_argument(
         "--apache",
         action="store_true",
@@ -138,6 +143,56 @@ def get_parser():
     return parser
 
 
+def get_file_collector_inputs():
+    images_folder = "/home/chavdarpapazov/nas_data_1/chavdar/data/sites/hq_mock_store/2026_01_14/ripped_assets/images_subset/150/data"
+    images_keyword = "head_left_"
+    images_file_extension = ".pnm"
+
+    depth_folder = "/home/chavdarpapazov/nas_data_1/chavdar/data/sites/hq_mock_store/2026_01_14/ripped_assets/depth/data"
+    depth_keyword = "head_depth_"
+    depth_file_extension = ".png"
+
+    return [
+        FileCollectorInput(
+            folder=images_folder,
+            keyword=images_keyword,
+            file_extension=images_file_extension,
+        ),
+        FileCollectorInput(
+            folder=depth_folder,
+            keyword=depth_keyword,
+            file_extension=depth_file_extension,
+        ),
+    ]
+
+
+def load_inputs():
+    file_collector_inputs = get_file_collector_inputs()
+    assert (
+        len(file_collector_inputs) == 2
+    ), f"We need pairs not {len(file_collector_inputs)}-tuples."
+
+    corresponding_file_paths = collect_corresponding_file_paths(file_collector_inputs)
+    intrinsics = np.array([[640.0, 0.0, 640.0], [0.0, 640.0, 512.0], [0.0, 0.0, 1.0]])
+
+    views = []
+    for file_paths in corresponding_file_paths.values():
+        assert len(file_paths) == 2, f"We need pairs not {len(file_paths)}-tuples."
+        bgr_image = cv2.imread(file_paths[0], cv2.IMREAD_COLOR)
+        rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
+        depth_image = cv2.imread(file_paths[1], cv2.IMREAD_ANYDEPTH) / 1000.0
+        views.append(
+            {
+                "img": rgb_image,
+                "depth_z": depth_image.astype(np.float32),
+                "intrinsics": intrinsics.astype(np.float32),
+                "is_metric_scale": torch.tensor([True], device="cuda"),
+            }
+        )
+
+    return preprocess_inputs(views)
+
+
 def main():
     # Parser for arguments and Rerun
     parser = get_parser()
@@ -150,8 +205,12 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
+    # Load images
+    print(f"Loading input data from 'HARD-CODED-PATH'...")
+    views = load_inputs()
+
     # Initialize model from HuggingFace
-    if args.apache:
+    if False:
         model_name = "facebook/map-anything-apache"
         print("Loading Apache 2.0 licensed MapAnything model...")
     else:
@@ -160,11 +219,7 @@ def main():
     model = MapAnything.from_pretrained(model_name).to(device)
 
     verbose = True
-
-    # Load images
-    print(f"Loading images from: {args.image_folder}")
-    views = load_images(args.image_folder, verbose=verbose)
-    print(f"Loaded {len(views)} views")
+    print(f"Loaded {len(views)} images.")
 
     # Run model inference with memory-efficient defaults
     print("Running inference...")
