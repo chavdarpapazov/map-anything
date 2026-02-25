@@ -1,4 +1,3 @@
-# Copyright 2026 Toyota Research Institute.  All rights reserved.
 import collections
 import glob
 import os
