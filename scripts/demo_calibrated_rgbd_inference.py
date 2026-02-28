@@ -260,36 +260,46 @@ def main(map_config_file_path: str):
         print("Loading CC-BY-NC 4.0 licensed MapAnything model...")
     model = MapAnything.from_pretrained(model_name).to(device)
 
+    error_message = None
+    elapsed_time_min = None
+
     # Run model inference with memory-efficient defaults
     print("Running inference...")
     start_time = time.perf_counter()
-    outputs = model.infer(
-        views,
-        memory_efficient_inference=True,
-        minibatch_size=1,
-        use_amp=True,
-        amp_dtype="bf16",
-        apply_mask=True,
-        mask_edges=True,
-    )
-    elapsed_time_min = (time.perf_counter() - start_time) / 60.0
-    print(f"Inference complete [took {elapsed_time_min:.2f} min].")
+    try:
+        outputs = model.infer(
+            views,
+            memory_efficient_inference=True,
+            minibatch_size=1,
+            use_amp=True,
+            amp_dtype="bf16",
+            apply_mask=True,
+            mask_edges=True,
+        )
+    except Exception as error:
+        error_message = str(error)
+        print(f"Mapping failed: {error_message}.")
+    else:
+        elapsed_time_min = (time.perf_counter() - start_time) / 60.0
+        print(f"Inference complete [took {elapsed_time_min:.2f} min].")
 
-    # Save the timing to file.
+        # Save the camera poses.
+        id_and_pose_list = []
+        for id, prediction in zip(view_ids, outputs):
+            camera_pose = prediction["camera_poses"][0].cpu().numpy()  # (4, 4)
+            id_and_pose_list.append((id, camera_pose))
+        save_pose_graph(id_and_pose_list, map_config_file_path)
+
+    # Save stats to file.
     map_statistics_file_path = os.path.join(
         os.path.dirname(map_config_file_path),
         "map_statistics.txt",
     )
     with open(map_statistics_file_path, "w") as f:
-        f.write(f"Mapping took {elapsed_time_min:.2f} minute(s).\n")
-
-    # Save the camera poses.
-    id_and_pose_list = []
-    for id, prediction in zip(view_ids, outputs):
-        camera_pose = prediction["camera_poses"][0].cpu().numpy()  # (4, 4)
-        id_and_pose_list.append((id, camera_pose))
-    save_pose_graph(id_and_pose_list, map_config_file_path)
-
+        if elapsed_time_min:
+            f.write(f"Mapping took {elapsed_time_min:.2f} minute(s).\n")
+        if error_message:
+            f.write(f"Mapping failed: {error_message}.")
     print("Done.")
 
 
